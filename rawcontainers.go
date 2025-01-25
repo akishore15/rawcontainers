@@ -1,19 +1,40 @@
-package main
-
 import (
-	"fmt"
 	"os"
-	"os/exec"
-	"syscall"
+	"path/filepath"
+	"golang.org/x/sys/unix"
 )
+
+// Create a temporary directory for the container's filesystem
+func createContainerRoot() (string, error) {
+	dir, err := os.MkdirTemp("", "container-root")
+	if err != nil {
+		return "", err
+	}
+	return dir, nil
+}
 
 // RunContainer runs a command in a new namespace
 func RunContainer(command string, args []string) error {
+	// Create a temporary root filesystem for the container
+	rootDir, err := createContainerRoot()
+	if err != nil {
+		return fmt.Errorf("failed to create container root: %w", err)
+	}
+	defer os.RemoveAll(rootDir) // Clean up
+
+	// Mount the new root filesystem
+	if err := unix.Chroot(rootDir); err != nil {
+		return fmt.Errorf("failed to chroot: %w", err)
+	}
+	if err := os.Chdir("/"); err != nil {
+		return fmt.Errorf("failed to change directory: %w", err)
+	}
+
 	// Create a new process in a new namespace
 	attr := &syscall.ProcAttr{
-		Env:   os.Environ(),
+		Env: os.Environ(),
 		Sys: &syscall.SysProcAttr{
-			Cloneflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWIPC | syscall.CLONE_NEWNET | syscall.CLONE_NEWPID,
+			Cloneflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWIPC | syscall.CLONE_NEWNET | syscall.CLONE_NEWPID | syscall.CLONE_NEWUSER,
 			Unshareflags: syscall.CLONE_NEWUSER,
 		},
 	}
@@ -38,20 +59,4 @@ func RunContainer(command string, args []string) error {
 	}
 
 	return nil
-}
-
-func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: rawcontainers <command> [args...]")
-		os.Exit(1)
-	}
-
-	command := os.Args[1]
-	args := os.Args[2:]
-
-	err := RunContainer(command, args)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
-	}
 }
